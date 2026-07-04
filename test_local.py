@@ -1,7 +1,8 @@
 import base64
 import requests
 
-url = "http://127.0.0.1:8003/answer-image"
+# url = "http://127.0.0.1:8003/answer-image"
+url = "https://multimodal-qa-api.onrender.com/answer-image"
 
 def test_image(image_path, question, expected):
     with open(image_path, "rb") as f:
