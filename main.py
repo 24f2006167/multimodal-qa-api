@@ -47,10 +47,19 @@ async def answer_image(payload: ImageQuestion):
                         "text": (
                             f"Look at this image carefully and answer this question: "
                             f"{payload.question}\n\n"
-                            f"IMPORTANT: Reply with ONLY the answer itself. "
-                            f"If it's a number, give just the number (no currency "
-                            f"symbols, no units, no extra words)."
-                        ),
+                            f"IMPORTANT RULES:\n"
+                            f"- First understand exactly what is being asked - a number, a name, "
+                            f"a label, or a category.\n"
+                            f"- Reply with ONLY the answer itself, nothing else - no explanations, "
+                            f"no full sentences.\n"
+                            f"- If the question asks for a number/amount/total, give just the number "
+                            f"exactly as shown in the image (preserve decimal places, e.g. 495.00 "
+                            f"stays 495.00). No currency symbols, no units, no commas.\n"
+                            f"- If the question asks for a name, category, or label (e.g. 'which "
+                            f"category', 'what is the vendor name'), give just that name/label as "
+                            f"plain text - not a percentage or number, even if percentages are "
+                            f"visible in the image."
+                                                    ),
                     },
                     {
                         "type": "image_url",
