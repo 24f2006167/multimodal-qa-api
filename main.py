@@ -1,99 +1,72 @@
 import os
 import base64
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from openai import OpenAI
+from google import genai
+from google.genai import types
 
+# 1. Initialize FastAPI app
 app = FastAPI()
 
-# Step A: CORS enable karo - taaki Cloudflare Worker se grader call kar sake
+# 2. Enable CORS (Required so the external assignment grader can access your API)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],       # sabko allow karo
+    allow_origins=["*"],  # Allows requests from any origin
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Allows all HTTP methods (GET, POST, etc.)
+    allow_headers=["*"],  # Allows all headers
 )
 
-# Step B: aipipe.org client setup
-client = OpenAI(
-    api_key=os.environ.get("AIPIPE_TOKEN"),   # token yahan se aayega (env var)
-    base_url="https://aipipe.org/openai/v1",
-)
-
-# Step C: Request ka shape define karo
-class ImageQuestion(BaseModel):
+# 3. Define the expected incoming JSON structure
+class RequestBody(BaseModel):
     image_base64: str
     question: str
 
+# 4. Initialize the Gemini Client
+# It automatically looks for an environment variable named GEMINI_API_KEY
+client = genai.Client()
 
 @app.post("/answer-image")
-async def answer_image(payload: ImageQuestion):
-    # image_base64 kabhi kabhi "data:image/png;base64,...." format mein aata hai
-    # agar aisa hai to sirf base64 wala part rakho
-    img_b64 = payload.image_base64.strip()
-    if "," in img_b64 and img_b64.strip().startswith("data:"):
-        img_b64 = img_b64.split(",", 1)[1]
-
-    # Multimodal model ko image + question bhejo
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        temperature=0,   # deterministic answers - randomness nahi chahiye
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a precise data-extraction assistant. You will be shown an "
-                    "image and a question about it. Respond with ONLY the raw answer - "
-                    "no explanations, no full sentences, no labels like 'Answer:'. "
-                    "If the answer is a number, give ONLY the digits and decimal point "
-                    "exactly as shown in the image (e.g. 495.00 stays 495.00, do not "
-                    "round or reformat). No currency symbols (₹ $ € £), no commas, no "
-                    "units (kg, %, etc.), no extra words. "
-                    "If the answer is a name, category, or label, give ONLY that text, "
-                    "plain, with no extra punctuation or explanation."
-                ),
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": payload.question,
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{img_b64}"
-                        },
-                    },
-                ],
-            },
-        ],
-    )
-
-    answer_text = response.choices[0].message.content.strip()
-
-    # Safety cleanup - agar model phir bhi extra cheezein de de
-    answer_text = answer_text.strip('"').strip("'")
-    answer_text = answer_text.replace(",", "")
-    for symbol in ["₹", "$", "€", "£"]:
-        answer_text = answer_text.replace(symbol, "")
-
-    # Agar model ne multi-line ya extra explanation de diya ho, pehli line hi rakho
-    if "\n" in answer_text:
-        answer_text = answer_text.split("\n")[0].strip()
-
-    # Agar model ne "Answer: X" jaisa format diya ho
-    if ":" in answer_text and len(answer_text.split(":")[0]) < 15:
-        answer_text = answer_text.split(":", 1)[1].strip()
-
-    answer_text = answer_text.strip()
-
-    return {"answer": answer_text}
-
-
-@app.get("/")
-def health_check():
-    return {"status": "ok"}
+async def answer_image(body: RequestBody):
+    try:
+        # Step A: Clean up the Base64 string if it contains metadata prefixes
+        base64_data = body.image_base64
+        if "," in base64_data:
+            base64_data = base64_data.split(",")[1]
+            
+        # Step B: Convert the Base64 text string into raw binary image bytes
+        image_bytes = base64.b64decode(base64_data)
+        
+        # Step C: Format the image bytes specifically for the Google GenAI SDK
+        image_part = types.Part.from_bytes(
+            data=image_bytes,
+            mime_type="image/png",  # Defaulting to PNG
+        )
+        
+        # Step D: Structure a strict system instruction prompt for the model
+        system_prompt = (
+            "You are an expert data extraction assistant. "
+            "Analyze the provided image and answer the user's question accurately. "
+            "CRITICAL RULE: If the answer is a number, amount, or value, return ONLY the raw numeric digits "
+            "(e.g., '4089.35'). Do NOT include currency symbols like $, ₹, €, commas, or text units."
+        )
+        
+        # Step E: Send the image and question to Gemini 2.5 Flash
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[image_part, body.question],
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                temperature=0.0, # Zero temperature ensures deterministic, factual extraction
+            )
+        )
+        
+        # Step F: Extract and clean the textual answer
+        final_answer = response.text.strip()
+        
+        # Return the required JSON response structure
+        return {"answer": final_answer}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
